@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ground-control-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    envVars:
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: APP_DEBUG
+        value: "false"
+      - key: GPS_SOURCE_MODE
+        value: disabled
+      - key: JETSON_IP
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_API_KEY
+        sync: false
