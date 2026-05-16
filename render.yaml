@@ -17,3 +17,5 @@ services:
         sync: false
       - key: SUPABASE_API_KEY
         sync: false
+
+# Railway deployment (see railway.json and Procfile)
