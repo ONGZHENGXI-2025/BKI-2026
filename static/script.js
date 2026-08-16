@@ -14,8 +14,12 @@
     const state = {
         selectedSource: "",
         streamingActive: false,
+        streamUrl: "",
         statsInterval: null,
         telemetryInterval: null,
+        lastStatsFrameTs: null,
+        lastStreamRestartMs: 0,
+        lastDrawTs: 0,
         gpsLive: false,
         lastCapturedFilename: null,
         lastClusterResult: null,
@@ -30,7 +34,10 @@
         voiceEnabled: true,
         lastConnectionStatus: null,
         currentView: "execute",
-        historyMissions: []
+        historyMissions: [],
+        lastGpsPayload: null,
+        detectionMode: "balloon",
+        detectionLabel: "Balloon Detection (Local)"
     };
 
     const el = {
@@ -64,6 +71,8 @@
         autoCorrect: document.getElementById("autoCorrect"),
 
         videoSource: document.getElementById("videoSource"),
+        detectionMode: document.getElementById("detectionMode"),
+        detectionModeChip: document.getElementById("detectionModeChip"),
         videoSourceLabel: document.getElementById("videoSourceLabel"),
         videoStage: document.querySelector(".video-stage"),
         videoCanvas: document.getElementById("videoCanvas"),
@@ -172,6 +181,40 @@
         return `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
     }
 
+    function detectionModeUiLabel(mode) {
+        if (mode === "people_online") {
+            return "People Detection (Online)";
+        }
+        return "Balloon Detection (Local)";
+    }
+
+    function applyDetectionModeToUi(mode, label) {
+        const normalizedMode = mode === "people_online" ? "people_online" : "balloon";
+        const finalLabel = label || detectionModeUiLabel(normalizedMode);
+        state.detectionMode = normalizedMode;
+        state.detectionLabel = finalLabel;
+        if (el.detectionMode) {
+            el.detectionMode.value = normalizedMode;
+        }
+        if (el.detectionModeChip) {
+            el.detectionModeChip.textContent = `Detection: ${finalLabel}`;
+        }
+    }
+
+    function loadDetectionMode() {
+        fetch("/api/detection_mode")
+            .then((res) => res.json())
+            .then((data) => {
+                if (!data.ok) {
+                    return;
+                }
+                applyDetectionModeToUi(data.mode, data.label);
+            })
+            .catch(() => {
+                applyDetectionModeToUi(state.detectionMode, state.detectionLabel);
+            });
+    }
+
     function announceWelcomeAndStatus() {
         speak("Hey boss, I am Friday, welcome to the Aero Command system.", { interrupt: true });
         const conn = state.streamingActive ? "connected" : "not connected";
@@ -227,10 +270,16 @@
         el.groupsCount.textContent = Number(groups) > 0 ? groups : "OFF";
     }
 
-    function drawFrame() {
+    function drawFrame(now) {
         if (!state.streamingActive) {
             return;
         }
+        const t = Number(now || performance.now());
+        if (t - state.lastDrawTs < 33) {
+            requestAnimationFrame(drawFrame);
+            return;
+        }
+        state.lastDrawTs = t;
         try {
             ctx.clearRect(0, 0, el.videoCanvas.width, el.videoCanvas.height);
             ctx.drawImage(streamImage, 0, 0, el.videoCanvas.width, el.videoCanvas.height);
@@ -540,7 +589,26 @@
         state.statsInterval = setInterval(() => {
             fetch("/stats")
                 .then((r) => r.json())
-                .then((data) => updateStatsOverlay(data.people, data.fps, data.groups))
+                .then((data) => {
+                    updateStatsOverlay(data.people, data.fps, data.groups);
+                    if (data.detection_mode || data.detection_label) {
+                        applyDetectionModeToUi(data.detection_mode, data.detection_label);
+                    }
+                    const updatedAt = Number(data.updated_at);
+                    if (Number.isFinite(updatedAt) && updatedAt > 1000000000) {
+                        state.lastStatsFrameTs = updatedAt;
+                    }
+                    if (!state.streamingActive || !LIVE_SOURCES.includes(state.selectedSource)) {
+                        return;
+                    }
+                    if (Number.isFinite(state.lastStatsFrameTs)) {
+                        const nowSec = Date.now() / 1000;
+                        const frameAgeSec = nowSec - state.lastStatsFrameTs;
+                        if (frameAgeSec > 2.5) {
+                            restartLiveStreamImage();
+                        }
+                    }
+                })
                 .catch(() => {
                     // Keep last values if stats are temporarily unavailable.
                 });
@@ -555,16 +623,38 @@
         updateStatsOverlay(0, 0, 0);
     }
 
+    const LIVE_SOURCES = ["Jetson Nano (Live)", "UniRC 7 (Live)"];
+
+    function restartLiveStreamImage() {
+        if (!state.streamingActive || !state.streamUrl) {
+            return;
+        }
+        const nowMs = Date.now();
+        if (nowMs - state.lastStreamRestartMs < 1500) {
+            return;
+        }
+        state.lastStreamRestartMs = nowMs;
+        streamImage.src = "";
+        setTimeout(() => {
+            if (!state.streamingActive) {
+                return;
+            }
+            streamImage.src = `${state.streamUrl}${state.streamUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
+        }, 120);
+    }
+
     function startStream() {
         if (!state.selectedSource) {
             showToast("Please select a source first", true);
             return;
         }
 
-        const streamUrl = state.selectedSource === "Jetson Nano (Live)" ? "/live_stream" : "/stream";
-        const selectPromise = state.selectedSource === "Jetson Nano (Live)"
+        const isLive = LIVE_SOURCES.includes(state.selectedSource);
+        const streamBaseUrl = isLive ? "/live_stream" : "/stream";
+        const streamUrl = `${streamBaseUrl}?detection_mode=${encodeURIComponent(state.detectionMode)}`;
+        const selectPromise = isLive
             ? Promise.resolve()
-            : fetch(`/select/${state.selectedSource}`).then((res) => {
+            : fetch(`/select/${encodeURIComponent(state.selectedSource)}`).then((res) => {
                 if (!res.ok) {
                     throw new Error("select failed");
                 }
@@ -573,7 +663,15 @@
         selectPromise
             .then(() => {
                 state.streamingActive = true;
-                streamImage.src = streamUrl;
+                state.streamUrl = streamUrl;
+                state.lastStatsFrameTs = null;
+                state.lastDrawTs = 0;
+                streamImage.onerror = () => {
+                    if (state.streamingActive) {
+                        restartLiveStreamImage();
+                    }
+                };
+                streamImage.src = `${streamUrl}${streamUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
                 streamImage.onload = drawFrame;
                 if (el.videoStage) {
                     el.videoStage.classList.add("stream-active");
@@ -590,6 +688,9 @@
     function stopStream(options = {}) {
         const announce = options.announce !== false;
         state.streamingActive = false;
+        state.streamUrl = "";
+        state.lastStatsFrameTs = null;
+        state.lastDrawTs = 0;
         streamImage.src = "";
         ctx.clearRect(0, 0, el.videoCanvas.width, el.videoCanvas.height);
         if (el.videoStage) {
@@ -620,8 +721,29 @@
             return;
         }
 
-        // Battery is not available from current GPS bridge payload yet.
-        el.batteryVal.textContent = "-";
+        const data = state.lastGpsPayload || {};
+        const pctRaw = Number(data.battery_pct);
+        const voltageRaw = Number(data.battery_voltage);
+        const hasPct = Number.isFinite(pctRaw) && pctRaw >= 0;
+        const hasVoltage = Number.isFinite(voltageRaw) && voltageRaw > 0;
+
+        if (!hasPct && !hasVoltage) {
+            el.batteryVal.textContent = "-";
+            el.batteryBar.style.width = "0%";
+            return;
+        }
+
+        if (hasPct) {
+            const pct = Math.max(0, Math.min(100, pctRaw));
+            el.batteryVal.textContent = hasVoltage
+                ? `${pct.toFixed(0)}% (${voltageRaw.toFixed(2)} V)`
+                : `${pct.toFixed(0)}%`;
+            el.batteryBar.style.width = `${pct.toFixed(0)}%`;
+            return;
+        }
+
+        // If only voltage is available, still show it even without percentage.
+        el.batteryVal.textContent = `${voltageRaw.toFixed(2)} V`;
         el.batteryBar.style.width = "0%";
     }
 
@@ -664,6 +786,7 @@
             .then((res) => res.json())
             .then((data) => {
                 if (!data.ok || data.lat === null || data.lon === null) {
+                    state.lastGpsPayload = data;
                     const rawSource = data.source ?? "-";
                     const sourceLabel = formatSourceLabel(rawSource);
                     el.sourceVal.textContent = sourceLabel;
@@ -690,6 +813,7 @@
                 }
                 el.gpsLat.textContent = Number(data.lat).toFixed(7);
                 el.gpsLon.textContent = Number(data.lon).toFixed(7);
+                state.lastGpsPayload = data;
                 el.gpsFix.textContent = data.fix_type ?? "-";
                 el.gpsSats.textContent = data.sats ?? "-";
                 updateGpsMap(data.lat, data.lon);
@@ -981,7 +1105,10 @@
         fetch("/cluster_image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: state.lastCapturedFilename })
+            body: JSON.stringify({
+                filename: state.lastCapturedFilename,
+                detection_mode: state.detectionMode
+            })
         })
             .then((res) => res.json())
             .then((data) => {
@@ -1118,6 +1245,34 @@
             }
         });
 
+        if (el.detectionMode) {
+            el.detectionMode.addEventListener("change", function onDetectionModeChange() {
+                const selectedMode = this.value;
+                fetch("/api/detection_mode", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ mode: selectedMode })
+                })
+                    .then((res) => res.json())
+                    .then((data) => {
+                        if (!data.ok) {
+                            showToast(data.error || "Failed to change detection mode", true);
+                            this.value = state.detectionMode;
+                            return;
+                        }
+                        applyDetectionModeToUi(data.mode, data.label);
+                        showToast(`Detection mode: ${data.label}`, true);
+                        if (state.streamingActive) {
+                            restartLiveStreamImage();
+                        }
+                    })
+                    .catch(() => {
+                        showToast("Failed to change detection mode", true);
+                        this.value = state.detectionMode;
+                    });
+            });
+        }
+
         el.startBtn.addEventListener("click", startStream);
         el.stopBtn.addEventListener("click", () => stopStream());
         el.captureBtn.addEventListener("click", runCapture);
@@ -1223,6 +1378,7 @@
         setMode("normal", { announce: false });
         switchView("execute");
         bindEvents();
+        loadDetectionMode();
         startSchedulers();
 
         if (speechSupported()) {

@@ -48,7 +48,10 @@
             <article class="panel panel-vision">
                 <div class="panel-header">
                     <h2>Vision Feed</h2>
-                    <span id="videoSourceLabel" class="panel-chip">No Source Selected</span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span id="videoSourceLabel" class="panel-chip">No Source Selected</span>
+                        <span id="detectionModeChip" class="panel-chip">Detection: Balloon</span>
+                    </div>
                 </div>
 
                 <div class="video-stage">
@@ -179,7 +182,14 @@
                     <option value="SCATTER_LONG_60_001.MP4">SCATTER_LONG_60_001</option>
                     <option value="SCATTER_LONG_90_001.MP4">SCATTER_LONG_90_001</option>
                     <option value="SCATTER_LONG_90_002.MP4">SCATTER_LONG_90_002</option>
+                    <option value="__laptop_usb_cam__">Laptop USB Cam (Live)</option>
                     <option value="Jetson Nano (Live)">Jetson Nano (Live)</option>
+                    <option value="UniRC 7 (Live)">UniRC 7 Series (Live RTSP)</option>
+                </select>
+                <label style="display:block;margin-top:10px;color:#9bb6c9;font-size:0.9rem;">Detection Mode</label>
+                <select id="detectionMode" class="video-source-select">
+                    <option value="people_online">People Detection (Online)</option>
+                    <option value="balloon">Balloon Detection (Local)</option>
                 </select>
             </article>
 

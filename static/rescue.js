@@ -22,6 +22,10 @@
         locationSourceInput: document.getElementById("locationSourceInput"),
         manualLatInput: document.getElementById("manualLatInput"),
         manualLonInput: document.getElementById("manualLonInput"),
+        manualCoordsBlock: document.getElementById("manualCoordsBlock"),
+        srcBrowserBtn: document.getElementById("srcBrowserBtn"),
+        srcManualBtn: document.getElementById("srcManualBtn"),
+        srcDroneBtn: document.getElementById("srcDroneBtn"),
         pushLocationBtn: document.getElementById("pushLocationBtn"),
         importLatestBtn: document.getElementById("importLatestBtn"),
         refreshStateBtn: document.getElementById("refreshStateBtn"),
@@ -29,6 +33,8 @@
         teamStatus: document.getElementById("teamStatus"),
         teamList: document.getElementById("teamList"),
         groupList: document.getElementById("groupList"),
+        teamCountBadge: document.getElementById("teamCountBadge"),
+        groupCountBadge: document.getElementById("groupCountBadge"),
         rescueToast: document.getElementById("rescueToast")
     };
 
@@ -110,6 +116,19 @@
         const host = String(window.location.hostname || "").toLowerCase();
         const localhost = host === "localhost" || host === "127.0.0.1";
         return window.isSecureContext || localhost;
+    }
+
+    function syncSourceToggle(source) {
+        const norm = normalizeLocationSource(source);
+        [el.srcBrowserBtn, el.srcManualBtn, el.srcDroneBtn].forEach((btn) => {
+            if (btn) {
+                btn.classList.toggle("active", btn.dataset.src === norm);
+            }
+        });
+        el.locationSourceInput.value = norm;
+        el.manualCoordsBlock.style.display = norm === "manual" ? "" : "none";
+        state.locationSource = norm;
+        localStorage.setItem("rescue_location_source", norm);
     }
 
     function updateGeoHint() {
@@ -387,23 +406,74 @@
         return best;
     }
 
+    function deleteTeam(teamId) {
+        if (!confirm(`Remove team "${teamId}" from the map? This cannot be undone.`)) {
+            return;
+        }
+        fetch("/api/rescue/team/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ team_id: teamId })
+        })
+            .then((res) => res.json())
+            .then((data) => {
+                if (!data.ok) {
+                    const msg = String(data.error || "Delete failed");
+                    showToast(msg.length > 100 ? `${msg.slice(0, 100)}…` : msg);
+                    el.teamStatus.textContent = `Delete failed: ${msg}`;
+                    return;
+                }
+                showToast(`Team ${teamId} removed`);
+                el.teamStatus.textContent = `Team ${teamId} successfully removed.`;
+                fetchState();
+            })
+            .catch((err) => {
+                showToast("Delete failed — network error");
+                el.teamStatus.textContent = `Delete failed: ${err.message || err}`;
+            });
+    }
+
     function renderTeams() {
+        if (el.teamCountBadge) {
+            el.teamCountBadge.textContent = state.teams.length;
+        }
         if (!state.teams.length) {
-            el.teamList.innerHTML = '<div class="hint">No active teams yet.</div>';
+            el.teamList.innerHTML = '<div class="rc-empty-hint">No active teams yet.</div>';
             return;
         }
 
         el.teamList.innerHTML = state.teams.map((t) => {
             const nearest = nearestGroupForTeam(t);
+            const isMe = String(t.team_id) === String(state.myTeamId);
             return `
-                <div class="rescue-item">
-                    <div><strong>${t.team_name || t.team_id}</strong> <span class="muted">(${t.team_id})</span></div>
-                    <div class="hint">Lat: ${Number(t.latitude || 0).toFixed(6)} | Lon: ${Number(t.longitude || 0).toFixed(6)}</div>
-                    <div class="hint">Assigned: ${t.current_group || "-"} | Status: ${t.status || "active"}</div>
-                    <div class="hint">Nearest open group: ${nearest ? `${nearest.group.group_id} (${fmtMeters(nearest.distance)})` : "-"}</div>
+                <div class="rescue-item rc-team-card${isMe ? " rc-team-me" : ""}">
+                    <div class="rc-card-header">
+                        <span class="rc-card-name">${t.team_name || t.team_id}</span>
+                        ${isMe ? '<span class="rc-me-badge">YOU</span>' : ""}
+                        <span class="rc-card-id">${t.team_id}</span>
+                        <button class="btn rc-delete-btn rescue-delete-team-btn" data-team-id="${t.team_id}" title="Remove team">🗑</button>
+                    </div>
+                    <div class="rc-card-row">
+                        <span class="rc-label">Location</span>
+                        <span>${Number(t.latitude || 0).toFixed(6)}, ${Number(t.longitude || 0).toFixed(6)}</span>
+                    </div>
+                    <div class="rc-card-row">
+                        <span class="rc-label">Assigned</span>
+                        <span>${t.current_group || "—"}</span>
+                        <span class="rc-label" style="margin-left:12px">Status</span>
+                        <span class="status-pill ${statusClass(t.status || "active")}">${t.status || "active"}</span>
+                    </div>
+                    ${nearest ? `<div class="rc-card-row rc-nearest">
+                        <span class="rc-label">Nearest open</span>
+                        <span>${nearest.group.group_id} &bull; ${fmtMeters(nearest.distance)}</span>
+                    </div>` : ""}
                 </div>
             `;
         }).join("");
+
+        el.teamList.querySelectorAll(".rescue-delete-team-btn").forEach((btn) => {
+            btn.addEventListener("click", () => deleteTeam(btn.dataset.teamId));
+        });
     }
 
     function claimGroup(groupId) {
@@ -451,8 +521,11 @@
     }
 
     function renderGroups() {
+        if (el.groupCountBadge) {
+            el.groupCountBadge.textContent = state.groups.length;
+        }
         if (!state.groups.length) {
-            el.groupList.innerHTML = '<div class="hint">No victim groups yet. Import latest mission groups.</div>';
+            el.groupList.innerHTML = '<div class="rc-empty-hint">No victim groups yet.<br>Use <strong>Import Groups</strong> to load from latest mission.</div>';
             return;
         }
 
@@ -461,19 +534,35 @@
             const s = statusClass(g.status || "unassigned");
             const assigned = String(g.assigned_team || "").trim();
             const disabled = assigned && assigned !== myTeam;
-            const lockText = disabled ? `Handled by ${assigned}` : "Available";
 
             return `
-                <div class="rescue-item rescue-group-item ${s}">
-                    <div><strong>${g.group_id}</strong> <span class="status-pill ${s}">${g.status || "unassigned"}</span></div>
-                    <div class="hint">Victims: ${g.victim_count || 0} | Assigned: ${assigned || "-"}</div>
-                    <div class="hint">Lat: ${Number(g.latitude || 0).toFixed(6)} | Lon: ${Number(g.longitude || 0).toFixed(6)}</div>
-                    <div class="action-row">
-                        <button class="btn btn-outline rescue-claim-btn" data-group-id="${g.group_id}" ${disabled ? "disabled" : ""}>Claim</button>
-                        <button class="btn btn-outline rescue-progress-btn" data-group-id="${g.group_id}">In Progress</button>
-                        <button class="btn btn-outline rescue-complete-btn" data-group-id="${g.group_id}">Complete</button>
+                <div class="rescue-item rescue-group-item rc-group-card ${s}">
+                    <div class="rc-card-header">
+                        <span class="rc-card-name">${g.group_id}</span>
+                        <span class="status-pill ${s}">${g.status || "unassigned"}</span>
                     </div>
-                    <div class="hint">${lockText}</div>
+                    <div class="rc-card-row">
+                        <span class="rc-label">Victims</span>
+                        <span class="rc-victims-count">${g.victim_count || 0}</span>
+                        <span class="rc-label" style="margin-left:12px">Assigned to</span>
+                        <span>${assigned || "—"}</span>
+                    </div>
+                    <div class="rc-card-row">
+                        <span class="rc-label">Location</span>
+                        <span>${Number(g.latitude || 0).toFixed(6)}, ${Number(g.longitude || 0).toFixed(6)}</span>
+                    </div>
+                    <div class="rc-group-actions">
+                        <button class="btn btn-outline rescue-claim-btn" data-group-id="${g.group_id}" ${disabled ? "disabled" : ""}>
+                            🏳 Claim
+                        </button>
+                        <button class="btn btn-outline rescue-progress-btn" data-group-id="${g.group_id}" ${disabled ? "disabled" : ""}>
+                            🔄 In Progress
+                        </button>
+                        <button class="btn btn-primary rescue-complete-btn" data-group-id="${g.group_id}" ${disabled ? "disabled" : ""}>
+                            ✅ Complete
+                        </button>
+                    </div>
+                    ${disabled ? `<div class="rc-lock-notice">🔒 Handled by ${assigned}</div>` : ""}
                 </div>
             `;
         }).join("");
@@ -614,9 +703,20 @@
         el.pushLocationBtn.addEventListener("click", pushMyLocation);
         el.importLatestBtn.addEventListener("click", importLatestMissionGroups);
         el.refreshStateBtn.addEventListener("click", fetchState);
+
+        // Source toggle buttons
+        [el.srcBrowserBtn, el.srcManualBtn, el.srcDroneBtn].forEach((btn) => {
+            if (!btn) {
+                return;
+            }
+            btn.addEventListener("click", () => {
+                syncSourceToggle(btn.dataset.src);
+                updateGeoHint();
+            });
+        });
+
         el.locationSourceInput.addEventListener("change", () => {
-            state.locationSource = normalizeLocationSource(el.locationSourceInput.value);
-            localStorage.setItem("rescue_location_source", state.locationSource);
+            syncSourceToggle(el.locationSourceInput.value);
             updateGeoHint();
         });
         el.manualLatInput.addEventListener("input", () => {
@@ -632,7 +732,8 @@
         bindEvents();
         el.teamIdInput.value = state.myTeamId;
         el.teamNameInput.value = state.myTeamName;
-        el.locationSourceInput.value = normalizeLocationSource(state.locationSource);
+        const savedSource = normalizeLocationSource(state.locationSource);
+        syncSourceToggle(savedSource);
         el.manualLatInput.value = localStorage.getItem("rescue_manual_lat") || "";
         el.manualLonInput.value = localStorage.getItem("rescue_manual_lon") || "";
         updateGeoHint();

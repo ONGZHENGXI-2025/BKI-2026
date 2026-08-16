@@ -45,50 +45,86 @@
         </section>
 
         <aside class="side-column">
-            <article class="panel">
+            <article class="panel rescue-console-panel">
                 <div class="panel-header">
                     <h2>Team Console</h2>
                 </div>
-                <div class="form-grid">
-                    <label>Team ID
-                        <input id="teamIdInput" placeholder="team_a" />
-                    </label>
-                    <label>Team Name
-                        <input id="teamNameInput" placeholder="Team A" />
-                    </label>
-                    <label>Location Source
-                        <select id="locationSourceInput">
-                            <option value="auto">Auto (Browser -> Drone -> Manual)</option>
-                            <option value="browser">Browser GPS</option>
-                            <option value="drone">Drone GPS (/gps)</option>
-                            <option value="manual">Manual Coordinates</option>
-                        </select>
-                    </label>
-                    <label>Manual Latitude
-                        <input id="manualLatInput" placeholder="3.1390000" />
-                    </label>
-                    <label>Manual Longitude
-                        <input id="manualLonInput" placeholder="101.6869000" />
-                    </label>
+
+                <!-- Team identity row -->
+                <div class="rc-identity-row">
+                    <div class="rc-field">
+                        <span class="rc-field-label">Team ID</span>
+                        <input id="teamIdInput" class="rc-input" placeholder="team_a" />
+                    </div>
+                    <div class="rc-field">
+                        <span class="rc-field-label">Team Name</span>
+                        <input id="teamNameInput" class="rc-input" placeholder="Team A" />
+                    </div>
                 </div>
-                <div class="action-row">
-                    <button class="btn btn-primary" id="pushLocationBtn" type="button">Push My Location</button>
-                    <button class="btn btn-outline" id="importLatestBtn" type="button">Import Latest Groups</button>
+
+                <!-- Location source toggle -->
+                <div class="rc-section-label">Location Source</div>
+                <div class="rc-source-toggle">
+                    <button class="rc-source-btn active" id="srcBrowserBtn" type="button" data-src="browser">
+                        <span class="rc-source-icon">📍</span>
+                        <span>Browser GPS<br><small>Use this device's location</small></span>
+                    </button>
+                    <button class="rc-source-btn" id="srcManualBtn" type="button" data-src="manual">
+                        <span class="rc-source-icon">✏️</span>
+                        <span>Manual Entry<br><small>Type coordinates</small></span>
+                    </button>
+                    <button class="rc-source-btn" id="srcDroneBtn" type="button" data-src="drone">
+                        <span class="rc-source-icon">🚁</span>
+                        <span>Drone GPS<br><small>From /gps telemetry</small></span>
+                    </button>
                 </div>
-                <div id="geoHint" class="hint">Tip: Browser GPS usually requires HTTPS or localhost.</div>
-                <div id="teamStatus" class="hint">Set your team details and push location to join operations.</div>
+                <!-- Hidden select kept for JS compat -->
+                <select id="locationSourceInput" style="display:none">
+                    <option value="auto">Auto</option>
+                    <option value="browser">Browser GPS</option>
+                    <option value="drone">Drone GPS (/gps)</option>
+                    <option value="manual">Manual Coordinates</option>
+                </select>
+
+                <!-- Manual coords (shown only in manual mode) -->
+                <div id="manualCoordsBlock" class="rc-coords-block" style="display:none">
+                    <div class="rc-coords-row">
+                        <div class="rc-field">
+                            <span class="rc-field-label">Latitude</span>
+                            <input id="manualLatInput" class="rc-input rc-coord-input" placeholder="3.1390000" />
+                        </div>
+                        <div class="rc-field">
+                            <span class="rc-field-label">Longitude</span>
+                            <input id="manualLonInput" class="rc-input rc-coord-input" placeholder="101.6869000" />
+                        </div>
+                    </div>
+                </div>
+
+                <div id="geoHint" class="rc-hint-box">📡 Tip: Browser GPS requires HTTPS or localhost.</div>
+                <div id="teamStatus" class="rc-status-box">Set your team details and push location to join operations.</div>
+
+                <div class="rc-action-row">
+                    <button class="btn btn-primary rc-push-btn" id="pushLocationBtn" type="button">
+                        <span>📤 Push My Location</span>
+                    </button>
+                    <button class="btn btn-outline rc-import-btn" id="importLatestBtn" type="button">
+                        <span>📥 Import Groups</span>
+                    </button>
+                </div>
             </article>
 
-            <article class="panel">
-                <div class="panel-header">
+            <article class="panel rescue-list-panel">
+                <div class="panel-header rescue-panel-header-count">
                     <h2>Live Teams</h2>
+                    <span id="teamCountBadge" class="rc-count-badge">0</span>
                 </div>
                 <div id="teamList" class="rescue-list"></div>
             </article>
 
-            <article class="panel">
-                <div class="panel-header">
+            <article class="panel rescue-list-panel">
+                <div class="panel-header rescue-panel-header-count">
                     <h2>Victim Groups</h2>
+                    <span id="groupCountBadge" class="rc-count-badge">0</span>
                 </div>
                 <div id="groupList" class="rescue-list"></div>
             </article>
